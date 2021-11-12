@@ -26,6 +26,7 @@ ADDR get_region_id(ADDR addr) { return (addr >> MACROBLOCK_SIZE_BITS); }
 
 struct CascadedStrideTable {
   std::map<string, std::map<ADDR, int> *> entries;
+  std::map<string, int> stride_cnt; // record the number of each stride
   CascadedStrideTable(){};
   void print() {
     for (auto entry : entries) {
@@ -41,6 +42,7 @@ struct CascadedStrideTable {
       auto new_map = new std::map<ADDR, int>;
       entries.insert(
           std::pair<string, std::map<ADDR, int> *>(previous_strides, new_map));
+      stride_cnt.insert(std::pair<string, int>(previous_strides, 0));
     }
     // update the corresponding entry
     auto curr_map = entries.find(previous_strides)->second;
@@ -48,8 +50,44 @@ struct CascadedStrideTable {
       curr_map->insert(std::pair<ADDR, int>(curr_strides, 0));
     }
     curr_map->find(curr_strides)->second += 1;
+    stride_cnt.find(previous_strides)->second += 1;
   }
   void clear() { entries.clear(); }
+  ADDR smapling_stride() {
+    // this function should only be used for the first CST (as we only sample a
+    // single stride)
+    int sum = 0;
+    for (auto e : stride_cnt) {
+      sum += e.second;
+    }
+    int r = rand() % sum;
+    int acc = 0;
+    for (auto e : stride_cnt) {
+      acc += e.second;
+      if (acc >= r) {
+        // translate string to stride
+        return std::stoi(e.first);
+      }
+    }
+  }
+  bool find_pattern(std::string history_pattern) {
+    return entries.find(history_pattern) != entries.end();
+  }
+  ADDR sample_stride(std::string history_pattern) {
+    if (entries.find(history_pattern) == entries.end()) {
+      printf("ERROR\n");
+      exit(1);
+    }
+    int r = rand() % stride_cnt.find(history_pattern)->second;
+    int acc = 0;
+    for (auto e : *entries.find(history_pattern)->second) {
+      acc += e.second;
+      if (acc >= r)
+        return e.first;
+    }
+    printf("ERROR\n");
+    exit(1);
+  }
 } CSTs[MAX_CASSCADING_DEGREE + 1];
 
 void print_CSTs() {
@@ -88,7 +126,6 @@ struct RegionHistoryTable {
       }
       last_access = addr;
       past_strides.push_back(addr);
-      // print_entry();
       if (past_strides.size() > MAX_CASSCADING_DEGREE + 1) {
         past_strides.erase(past_strides.begin());
       }
@@ -126,8 +163,11 @@ struct RegionHistoryTable {
 struct RegionReuseHistory {
   std::vector<ADDR> region_history;
   std::vector<int> region_reuse_hist;
+  int region_visit;
   RegionReuseHistory() {
     region_reuse_hist.clear();
+
+    region_visit = 0;
     for (int i = 0; i < MAX_REGION_REUSE_DISTANCE + 1; i++)
       region_reuse_hist.push_back(0);
   }
@@ -139,6 +179,7 @@ struct RegionReuseHistory {
     }
   }
   void access(ADDR addr) {
+    region_visit++;
     // get region
     ADDR region_id = get_region_id(addr);
     int reuse_distance = MAX_REGION_REUSE_DISTANCE;
@@ -160,7 +201,118 @@ struct RegionReuseHistory {
       region_history.erase(region_history.begin());
     }
   }
+  int sampling_reuse_distance() {
+    int r = rand() % region_visit;
+    int acc = 0;
+    for (int i = 0; i < MAX_REGION_REUSE_DISTANCE + 1; i++) {
+      acc += region_reuse_hist[i];
+      if (acc >= r)
+        return i;
+    }
+  }
 } RRH;
+
+// use another structure, similar like RHT,
+// to record the history during generation
+struct GenerateHistory {
+  std::map<ADDR, ADDR> last_access;
+  std::map<ADDR, std::vector<ADDR>> past_stride;
+  ADDR get_last_addr(ADDR region_id) {
+    if (last_access.find(region_id) == last_access.end()) {
+      return -1;
+    } else {
+      return last_access.find(region_id)->second;
+    }
+  }
+  std::vector<ADDR> get_past_strides(ADDR region_id) {
+    if (past_stride.find(region_id) == past_stride.end()) {
+      return std::vector<ADDR>();
+    } else {
+      return past_stride.find(region_id)->second;
+    }
+  }
+  void insert_new_access(ADDR region_id, ADDR access_addr, ADDR new_stride) {
+    if (last_access.find(region_id) == last_access.end()) {
+      last_access.insert(std::pair<ADDR, ADDR>(region_id, access_addr));
+    } else {
+      last_access.find(region_id)->second = access_addr;
+    }
+    if (past_stride.find(region_id) == past_stride.end()) {
+      past_stride.insert(
+          std::pair<ADDR, std::vector<ADDR>>(region_id, std::vector<ADDR>()));
+    }
+    std::vector<ADDR> stride = past_stride.find(region_id)->second;
+    stride.push_back(new_stride);
+    if (stride.size() > MAX_CASSCADING_DEGREE + 1) {
+      stride.erase(stride.begin());
+    }
+    past_stride.find(region_id)->second = stride;
+  }
+};
+
+void generate_proxy(int inst_num) {
+  int curr_region_id = 0;
+  GenerateHistory proxy_history;
+  std::vector<ADDR> region_history;
+  for (int i = 0; i < inst_num; i++) {
+    // select region
+    int region_id;
+    // get reuse distance
+    int reuse_distance = RRH.sampling_reuse_distance();
+    if (reuse_distance == MAX_REGION_REUSE_DISTANCE ||
+        reuse_distance > region_history.size()) {
+      // use a new region
+      region_id = curr_region_id++;
+    } else {
+      // reuse the previous region
+      region_id = region_history[region_history.size() - reuse_distance];
+      // remove curr addr from history
+      region_history.erase(
+          std::remove(region_history.begin(), region_history.end(), region_id),
+          region_history.end());
+    }
+    region_history.push_back(region_id);
+    // remove the oldest history
+    if (region_history.size() > MAX_REGION_REUSE_DISTANCE) {
+      region_history.erase(region_history.begin());
+    }
+    // select the intral-region stride
+    ADDR last_addr = proxy_history.get_last_addr(region_id);
+    ADDR generated_mem_access;
+    ADDR stride;
+
+    bool find_history_pattern = false;
+    if (last_addr != -1) {
+      // use stride history to find the top match
+      std::vector<ADDR> past_strides =
+          proxy_history.get_past_strides(region_id);
+      for (int dis = past_strides.size(); dis > 0; dis--) {
+        // generate string of the history
+        std::string history_pattern = "";
+        for (int j = 0; j < dis; j++) {
+          history_pattern +=
+              std::to_string(past_strides[past_strides.size() - dis + j]);
+          history_pattern += ',';
+        }
+        // find history pattern in CST
+        if (CSTs[dis].find_pattern(history_pattern)) {
+          find_history_pattern = true;
+          stride = CSTs[dis].sample_stride(history_pattern);
+          generated_mem_access = last_addr + stride;
+        }
+      }
+    }
+    if (!find_history_pattern) {
+      // first time visit this region
+      // sampling strides
+      stride = CSTs[1].smapling_stride();
+      generated_mem_access = (region_id) << MACROBLOCK_SIZE_BITS;
+    }
+    printf("ADDR: %d\n", generated_mem_access);
+    proxy_history.insert_new_access(region_id, generated_mem_access, stride);
+  }
+}
+
 // update statistical information for new address
 void mem_access(ADDR addr) {
   // update inter-region reuse information
@@ -193,7 +345,7 @@ int main(int argc, char *argv[]) {
     field >> dec >> addr;
     mem_access(addr);
   }
-
+  generate_proxy(10);
   tfile.close();
   // ofs.close();
   return 0;
