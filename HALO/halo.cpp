@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <assert.h>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <inttypes.h>
@@ -8,19 +9,25 @@
 #include <sstream>
 #include <stdlib.h>
 #include <string>
+#include <sys/time.h>
+#include <time.h>
 
 #include <array>
 #include <map>
 #include <vector>
+#define ADDR int64_t
+typedef unsigned long long uns64;
 
+using namespace std;
+
+const uns64 MEM_SIZE_MB = 16384;
+const int LINESIZE = 64;
 const int MAX_REGION_REUSE_DISTANCE = 128;
 const int MAX_CASSCADING_DEGREE = 3;
 
 const int MACROBLOCK_SIZE_BITS = 10;
-
-using namespace std;
-
-#define ADDR int64_t
+const int MACROBLOCK_CNT =
+    (MEM_SIZE_MB * 1024 * 1024 / LINESIZE) >> MACROBLOCK_SIZE_BITS;
 
 ADDR get_region_id(ADDR addr) { return (addr >> MACROBLOCK_SIZE_BITS); }
 
@@ -265,15 +272,15 @@ void generate_proxy(int inst_num) {
     if (reuse_distance == MAX_REGION_REUSE_DISTANCE ||
         reuse_distance > region_history.size()) {
       // use a new region
-      region_id = curr_region_id++;
+      region_id = rand() % MACROBLOCK_CNT;
     } else {
       // reuse the previous region
       region_id = region_history[region_history.size() - reuse_distance];
-      // remove curr addr from history
-      region_history.erase(
-          std::remove(region_history.begin(), region_history.end(), region_id),
-          region_history.end());
     }
+    // remove curr addr from history
+    region_history.erase(
+        std::remove(region_history.begin(), region_history.end(), region_id),
+        region_history.end());
     region_history.push_back(region_id);
     // remove the oldest history
     if (region_history.size() > MAX_REGION_REUSE_DISTANCE) {
@@ -322,7 +329,7 @@ void generate_proxy(int inst_num) {
       // printf("get sampling: %d\n", stride);
       generated_mem_access = ((region_id) << MACROBLOCK_SIZE_BITS);
     }
-    printf("ADDR: %d\n", generated_mem_access);
+    printf("%d\n", generated_mem_access);
     proxy_history.insert_new_access(region_id, generated_mem_access, stride);
   }
 }
@@ -341,25 +348,39 @@ input: file1: memory trace for physical address
            file2: generated proxy memory trace
 */
 int main(int argc, char *argv[]) {
+  srand(42);
   // input: memory trace
   ifstream tfile;
   tfile.open(argv[1]);
 
   ADDR addr;
+  timeval begin, end;
+  gettimeofday(&begin, NULL);
   while (!tfile.eof()) {
     string buffer;
     getline(tfile, buffer);
-
-    if (buffer.find("Addr") == string::npos)
+    try {
+      // printf("%s\n", buffer.c_str());
+      addr = std::stoi(buffer);
+      mem_access(addr);
+    } catch (...) {
       continue;
-    int pos0 = buffer.find(": ");
-    stringstream field(buffer.substr(pos0 + 2, buffer.length() - pos0 + 2));
-
-    field >> dec >> addr;
-    mem_access(addr);
+    }
   }
-  print_CSTs();
-  generate_proxy(50);
+  gettimeofday(&end, NULL);
+  double elapsed =
+      (end.tv_sec - begin.tv_sec) + ((end.tv_usec - begin.tv_usec) / 1000000.0);
+
+  printf("Time to read access %lf ms\n", elapsed * 1000.0);
+  // RRH.print_hist();
+  // print_CSTs();
+  gettimeofday(&begin, NULL);
+  generate_proxy(10000);
+  gettimeofday(&end, NULL);
+  elapsed =
+      (end.tv_sec - begin.tv_sec) + ((end.tv_usec - begin.tv_usec) / 1000000.0);
+
+  printf("Time to generate %lf ms\n", elapsed * 1000.0);
   tfile.close();
   return 0;
 }
