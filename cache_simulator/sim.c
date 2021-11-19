@@ -41,7 +41,6 @@ int main(int argc, char **argv) {
   //--------------------------------------------------------------------
   // -- Iterate through the traces by cycling all cores till done
   //--------------------------------------------------------------------
-
   while (!(all_cores_done)) {
     all_cores_done = 1;
 
@@ -51,6 +50,8 @@ int main(int argc, char **argv) {
     }
 
     cycle += CLOCK_INC_FACTOR;
+    if (mcore[0]->access_count > 100000)
+      break;
   }
 
   mcache_print_stats(LLC, (char *)"L3CACHE");

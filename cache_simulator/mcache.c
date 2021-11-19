@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <map>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -62,6 +63,7 @@ void mcache_select_leader_sets(MCache *c, uns sets) {
 // the addr field is the lineaddress = address/cache_line_size
 ////////////////////////////////////////////////////////////////////
 
+std::map<Addr, int> hit_addr;
 Flag mcache_access(MCache *c, Addr addr) {
   Addr tag = addr; // full tags
   uns set = mcache_get_index(c, addr);
@@ -80,6 +82,11 @@ Flag mcache_access(MCache *c, Addr addr) {
       c->touched_wayid = (ii - start);
       c->touched_setid = set;
       c->touched_lineid = ii;
+      if (hit_addr.find(addr) == hit_addr.end()) {
+        hit_addr.insert(std::pair<Addr, int>(addr, 1));
+      } else {
+        hit_addr.find(addr)->second += 1;
+      }
       return HIT;
     }
   }
@@ -398,4 +405,7 @@ void mcache_print_stats(MCache *c, char *header) {
   printf("\n%s_MISS         \t : %llu", header, c->s_miss);
   printf("\n%s_MISSRATE     \t : %6.3f", header, missrate);
   printf("\n");
+  // for (auto e : hit_addr) {
+  //   printf("addr: %d  cnt: %d\n", e.first, e.second);
+  // }
 }
