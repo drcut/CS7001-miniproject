@@ -115,6 +115,35 @@ struct cache {
 };
 cache LLC(L3_ASSOC, L3_SETS);
 
+int global_hit_cnt[L3_ASSOC + 1];
+int global_access_cnt;
+void generate_global_hit_cnt() {
+  memset(global_hit_cnt, 0, sizeof(global_hit_cnt));
+  global_access_cnt = 0;
+  for (int i = 0; i < LLC.sets_cnt; i++) {
+    global_access_cnt += LLC.sets[i].access_cnt;
+  }
+  for (int reuse_dis = 1; reuse_dis < L3_ASSOC + 1; reuse_dis++) {
+    int acc = 0;
+    for (int s = 0; s < LLC.sets_cnt; s++)
+      acc += LLC.sets[s].hit_cnt[reuse_dis];
+    global_hit_cnt[reuse_dis] = acc;
+  }
+}
+int sampling_reuse_dis() {
+  int reuse_dis;
+  int acc = 0;
+  int r = rand() % global_access_cnt;
+  for (reuse_dis = 1; reuse_dis < L3_ASSOC + 1; reuse_dis++) {
+    acc += global_hit_cnt[reuse_dis];
+    if (acc > r) {
+      return reuse_dis;
+    }
+  }
+  return -1;
+}
+// set sampling: sampling a part of sets' reuse histogram
+// use this reuse histogram to represent all sets
 void generate_proxy(int inst_cnt, ofstream &fout) {
   int hit_n = 0;
   int miss_n = 0;
@@ -123,6 +152,7 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
   int tag_cnt[L3_SETS]; // used to generate cold cache miss
   memset(tag_cnt, 0, sizeof(tag_cnt));
   // do some initilization
+  generate_global_hit_cnt();
   // calculate the total access number for whole sets
   int access_cnt = 0;
   for (int i = 0; i < LLC.sets_cnt; i++) {
@@ -139,19 +169,19 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
         break;
     }
     // sampling reuse distance
-    r = rand() % LLC.sets[s].access_cnt;
-    acc = 0;
-    bool cache_hit = false;
-    int reuse_dis;
-    for (reuse_dis = 1; reuse_dis < L3_ASSOC + 1; reuse_dis++) {
-      acc += LLC.sets[s].hit_cnt[reuse_dis];
-      if (acc > r) {
-        cache_hit = true;
-        break;
-      }
-    }
+    // r = rand() % LLC.sets[s].access_cnt;
+    // acc = 0;
+    // bool cache_hit = false;
+    int reuse_dis = sampling_reuse_dis();
+    // for (reuse_dis = 1; reuse_dis < L3_ASSOC + 1; reuse_dis++) {
+    //   acc += LLC.sets[s].hit_cnt[reuse_dis];
+    //   if (acc > r) {
+    //     cache_hit = true;
+    //     break;
+    //   }
+    // }
     bool find_reuse = false;
-    if (cache_hit) {
+    if (reuse_dis != -1) {
       // get the reuse-dis th recently blocks
       for (int pos = 0; pos < L3_ASSOC; pos++) {
         if (dummy_cache.sets[s].lines[pos].valid) {
@@ -207,7 +237,7 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
         }
       }
     }
-    if (!cache_hit || !find_reuse) {
+    if (reuse_dis == -1 || !find_reuse) {
       // generate a miss
       int generated_mem_access = s + (tag_cnt[s]++) * dummy_cache.sets_cnt;
       fout << generated_mem_access << std::endl;
