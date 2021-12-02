@@ -176,32 +176,39 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
       }
       if (!find_reuse) {
         // need reuse distance larger than valid blocks
-        // use any valid block instead
+        // use the oldest block instead
+        int oldest_block = -1;
         for (int pos = 0; pos < L3_ASSOC; pos++) {
           if (dummy_cache.sets[s].lines[pos].valid) {
-            int generated_mem_access =
-                s + dummy_cache.sets[s].lines[pos].tag * dummy_cache.sets_cnt;
-            fout << generated_mem_access << std::endl;
-            dummy_cache.cache_access(generated_mem_access);
-            find_reuse = true;
-            break;
+            if (oldest_block == -1 ||
+                dummy_cache.sets[s].lines[pos].last_access <
+                    dummy_cache.sets[s].lines[oldest_block].last_access)
+              oldest_block = pos;
           }
         }
-        if (!find_reuse) {
-          // try to find any valid block in the cache
-          for (int set_id = 0; set_id < L3_SETS; set_id++) {
-            for (int way_id = 0; way_id < L3_ASSOC; way_id++) {
-              if (find_reuse)
-                break;
-              if (dummy_cache.sets[set_id].lines[way_id].valid) {
-                int generated_mem_access =
-                    s + dummy_cache.sets[set_id].lines[way_id].tag *
-                            dummy_cache.sets_cnt;
-                fout << generated_mem_access << std::endl;
-                dummy_cache.cache_access(generated_mem_access);
-                find_reuse = true;
-                break;
-              }
+        if (oldest_block != -1) {
+          int generated_mem_access =
+              s + dummy_cache.sets[s].lines[oldest_block].tag *
+                      dummy_cache.sets_cnt;
+          fout << generated_mem_access << std::endl;
+          dummy_cache.cache_access(generated_mem_access);
+          find_reuse = true;
+        }
+      }
+      if (!find_reuse) {
+        // try to find any valid block in the cache
+        for (int set_id = 0; set_id < L3_SETS; set_id++) {
+          for (int way_id = 0; way_id < L3_ASSOC; way_id++) {
+            if (find_reuse)
+              break;
+            if (dummy_cache.sets[set_id].lines[way_id].valid) {
+              int generated_mem_access =
+                  s + dummy_cache.sets[set_id].lines[way_id].tag *
+                          dummy_cache.sets_cnt;
+              fout << generated_mem_access << std::endl;
+              dummy_cache.cache_access(generated_mem_access);
+              find_reuse = true;
+              break;
             }
           }
         }
@@ -217,7 +224,6 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
       hit_n++;
     }
   }
-  printf("miss: %d  hit: %d cold hit: %d\n", miss_n, hit_n, cold_hit_n);
 }
 /*
 input: file1: memory trace for physical address
