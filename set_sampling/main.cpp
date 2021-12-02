@@ -123,11 +123,13 @@ void generate_global_hit_cnt() {
   for (int i = 0; i < LLC.sets_cnt; i++) {
     global_access_cnt += LLC.sets[i].access_cnt;
   }
+  // printf("global cnt: %d\n global reuse:\n", global_access_cnt);
   for (int reuse_dis = 1; reuse_dis < L3_ASSOC + 1; reuse_dis++) {
     int acc = 0;
     for (int s = 0; s < LLC.sets_cnt; s++)
       acc += LLC.sets[s].hit_cnt[reuse_dis];
     global_hit_cnt[reuse_dis] = acc;
+    // printf("dis[%d]: %d\n", reuse_dis, acc);
   }
 }
 int sampling_reuse_dis() {
@@ -158,6 +160,13 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
   for (int i = 0; i < LLC.sets_cnt; i++) {
     access_cnt += LLC.sets[i].access_cnt;
   }
+
+  // case: do not have valid reuse distance, find the oldest block in the cache
+  // otherwise, find any valid block in the cache
+  int bug_cnt = 0;
+  int cold_line = 0;
+
+  // generate proxy benchmark
   for (int i = 0; i < inst_cnt; i++) {
     // sampling sets
     int r = rand() % access_cnt;
@@ -205,38 +214,48 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
         }
       }
       if (!find_reuse) {
+        bug_cnt++;
         // need reuse distance larger than valid blocks
-        // use any valid block instead
+        // use the oldest valid block instead
+        int oldest_block = -1;
         for (int pos = 0; pos < L3_ASSOC; pos++) {
           if (dummy_cache.sets[s].lines[pos].valid) {
-            int generated_mem_access =
-                s + dummy_cache.sets[s].lines[pos].tag * dummy_cache.sets_cnt;
-            fout << generated_mem_access << std::endl;
-            dummy_cache.cache_access(generated_mem_access);
-            find_reuse = true;
-            break;
+            if (oldest_block == -1 ||
+                dummy_cache.sets[s].lines[pos].last_access <
+                    dummy_cache.sets[s].lines[oldest_block].last_access)
+              oldest_block = pos;
           }
         }
-        if (!find_reuse) {
-          // try to find any valid block in the cache
-          for (int set_id = 0; set_id < L3_SETS; set_id++) {
-            for (int way_id = 0; way_id < L3_ASSOC; way_id++) {
-              if (find_reuse)
-                break;
-              if (dummy_cache.sets[set_id].lines[way_id].valid) {
-                int generated_mem_access =
-                    s + dummy_cache.sets[set_id].lines[way_id].tag *
-                            dummy_cache.sets_cnt;
-                fout << generated_mem_access << std::endl;
-                dummy_cache.cache_access(generated_mem_access);
-                find_reuse = true;
-                break;
-              }
+        if (oldest_block != -1) {
+          int generated_mem_access =
+              s + dummy_cache.sets[s].lines[oldest_block].tag *
+                      dummy_cache.sets_cnt;
+          fout << generated_mem_access << std::endl;
+          dummy_cache.cache_access(generated_mem_access);
+          find_reuse = true;
+        }
+      }
+      if (!find_reuse) {
+        cold_line++;
+        // try to find any valid block in the cache
+        for (int set_id = 0; set_id < L3_SETS; set_id++) {
+          for (int way_id = 0; way_id < L3_ASSOC; way_id++) {
+            if (find_reuse)
+              break;
+            if (dummy_cache.sets[set_id].lines[way_id].valid) {
+              int generated_mem_access =
+                  s + dummy_cache.sets[set_id].lines[way_id].tag *
+                          dummy_cache.sets_cnt;
+              fout << generated_mem_access << std::endl;
+              dummy_cache.cache_access(generated_mem_access);
+              find_reuse = true;
+              break;
             }
           }
         }
       }
     }
+
     if (reuse_dis == -1 || !find_reuse) {
       // generate a miss
       int generated_mem_access = s + (tag_cnt[s]++) * dummy_cache.sets_cnt;
@@ -247,7 +266,7 @@ void generate_proxy(int inst_cnt, ofstream &fout) {
       hit_n++;
     }
   }
-  printf("miss: %d  hit: %d cold hit: %d\n", miss_n, hit_n, cold_hit_n);
+  // printf("hit: %d bug cnt: %d  cold line: %d\n", hit_n, bug_cnt, cold_line);
 }
 /*
 input: file1: memory trace for physical address
