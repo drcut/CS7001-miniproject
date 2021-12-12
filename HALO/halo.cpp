@@ -48,19 +48,21 @@ struct CascadedStrideTable {
     // calculate stride cnt
     for (auto entry : entries) {
       double sum = 0.0;
-      for (auto e : *entry.second) {
-        sum += e.second;
+      std::map<ADDR, double>::iterator itr;
+      for (itr = entry.second->begin(); itr != entry.second->end(); itr++) {
+        sum += itr->second;
       }
-      for (auto e : *entry.second) {
-        e.second /= sum;
+      for (itr = entry.second->begin(); itr != entry.second->end(); itr++) {
+        itr->second /= sum;
       }
     }
     double sum = 0.0;
-    for (auto entry : stride_cnt) {
-      sum += entry.second;
+    std::map<string, double>::iterator itr2;
+    for (itr2 = stride_cnt.begin(); itr2 != stride_cnt.end(); itr2++) {
+      sum += itr2->second;
     }
-    for (auto entry : stride_cnt) {
-      entry.second /= sum;
+    for (itr2 = stride_cnt.begin(); itr2 != stride_cnt.end(); itr2++) {
+      itr2->second /= sum;
     }
   }
   void insert(string previous_strides, ADDR curr_strides,
