@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from PIL import Image
+import numpy as np
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from load_data import ToTensor, HeatmapDataset
@@ -49,7 +51,7 @@ class Up(nn.Module):
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
+            self.conv = DoubleConv(in_channels, out_channels)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             self.conv = DoubleConv(in_channels, out_channels)
@@ -73,17 +75,19 @@ class autoencoder(nn.Module):
         self.n_channels = n_channels
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 32)
-        self.down1 = Down(32, 64)
+        self.inc = DoubleConv(n_channels, 16)
+        self.down1 = Down(16, 16)
 
-        self.up1 = Up(64, 32, bilinear)
-        self.outc = OutConv(32, n_channels)
+        self.up1 = Up(16, 16, bilinear)
+        self.outc = OutConv(16, n_channels)
 
     def forward(self, x):
         x = self.inc(x)
         x = self.down1(x)
         x = self.up1(x)
         logits = self.outc(x)
+        # scale the numerical value
+        logits = F.sigmoid(logits) * 255
         return logits
 
 def train(args, encoder_decoder, predictor, device, train_loader, optimizer, epoch):
@@ -102,6 +106,11 @@ def train(args, encoder_decoder, predictor, device, train_loader, optimizer, epo
         # get predictor miss rate of proxy heatmap
         proxy_predict_miss_rate = predictor(proxy_heatmap)
         loss = torch.nn.MSELoss()(proxy_predict_miss_rate, target_miss_rate)
+        # not only predicted miss rate, but proxy benchmark should also has close memory reference
+        # real # of memory reference
+        real_memory_reference = (255-real_heatmap).sum()
+        proxy_memory_reference = (255-proxy_heatmap).sum()
+        loss += (torch.abs(real_memory_reference-proxy_memory_reference)/real_memory_reference)
         loss.backward()
         
         torch.nn.utils.clip_grad_norm_(encoder_decoder.parameters(), max_norm=2.0, norm_type=2)
@@ -125,7 +134,7 @@ def train(args, encoder_decoder, predictor, device, train_loader, optimizer, epo
                 break
 
 
-def test(encoder_decoder, predictor, device, test_loader):
+def test(encoder_decoder, predictor, device, test_loader, epoch):
     encoder_decoder.eval()
     predictor.eval()
     proxy_error_rate = 0
@@ -146,11 +155,24 @@ def test(encoder_decoder, predictor, device, test_loader):
 
             proxy_error_rate += torch.mean(torch.abs((proxy_predict_miss_rate-target_miss_rate)/target_miss_rate))
             real_error_rate += torch.mean(torch.abs((predict_miss_rate-target_miss_rate)/target_miss_rate))
+            # save images
+            for idx in range(data.shape[0]):
+                # save real heatmap
+                real_heatmap_np = torch.squeeze(real_heatmap[idx].cpu().detach()).numpy().astype(np.uint8)
+                heatmap_figure = Image.fromarray(np.asarray(real_heatmap_np))
+                heatmap_figure = heatmap_figure.convert("L")
+                heatmap_figure.save("gen_heatmap/real_{}.png".format(idx))
+                # save proxy heatmap
+                proxy_heatmap_np = torch.squeeze(proxy_heatmap[idx].cpu().detach()).numpy().astype(np.uint8)
+                heatmap_figure = Image.fromarray(proxy_heatmap_np)
+                heatmap_figure = heatmap_figure.convert("L")
+                # import pdb
+                # pdb.set_trace()
+                heatmap_figure.save("gen_heatmap/proxy_epoch_{}_{}.png".format(epoch, idx))
+        proxy_error_rate /= cnt
+        real_error_rate /= cnt
 
-    proxy_error_rate /= cnt
-    real_error_rate /= cnt
-
-    print("Test set: Proxy LLC Error-rate: {:.4f}  Real LLC EDrror-rate: {:.4f}".format(proxy_error_rate, real_error_rate))
+        print("Test set: Proxy LLC Error-rate: {:.4f}  Real LLC EDrror-rate: {:.4f}".format(proxy_error_rate, real_error_rate))
 
 
 def main():
@@ -160,7 +182,7 @@ def main():
         "--batch-size", type=int, default=64, metavar="N", help="input batch size for training (default: 64)"
     )
     parser.add_argument(
-        "--test-batch-size", type=int, default=1000, metavar="N", help="input batch size for testing (default: 1000)"
+        "--test-batch-size", type=int, default=100, metavar="N", help="input batch size for testing (default: 1000)"
     )
     parser.add_argument("--epochs", type=int, default=14, metavar="N", help="number of epochs to train (default: 14)")
     parser.add_argument("--lr", type=float, default=1.0, metavar="LR", help="learning rate (default: 1.0)")
@@ -213,7 +235,7 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         train(args, encoder_decoder, miss_rate_predictor, device, train_loader, optimizer, epoch)
-        test(encoder_decoder, miss_rate_predictor, device, valid_loader)
+        test(encoder_decoder, miss_rate_predictor, device, valid_loader, epoch)
     # torch.save(encoder_decoder.state_dict(), './autoencoder.pth')
 
 
