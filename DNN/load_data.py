@@ -43,10 +43,11 @@ def read_miss_rate(miss_rate_file):
             if is_benchmark(line.strip()):
                 curr_benchmark = line.strip()
             if line.find("interval") != -1:
+                assert(curr_benchmark is not None)
                 # get interval
                 interval_start = line.split()[1].strip()
                 interval_end = line.split()[2].strip()
-                miss_rate_list.append(float(line.split()[-1]))
+                miss_rate_list.append(float(line.split()[-1])/100)
                 label_list.append("{}_inst_{}_{}.png".format(curr_benchmark, interval_start, interval_end))
     return miss_rate_list, label_list
 
