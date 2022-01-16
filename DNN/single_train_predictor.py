@@ -14,14 +14,14 @@ import os
 from reuse_predictor import ReuseDisPredictor
 from dist_util import setup, cleanup, run_demo
 
-def train(args, model, rank, train_loader, loss_func, optimizer, epoch):
+def train(args, model, train_loader, loss_func, optimizer, epoch):
     model.train()
     cnt = 0
     for batch_idx, sample_batched in enumerate(train_loader):
         data = sample_batched["heatmap"]
         target_reuse_dis = sample_batched["reuse_dis"]
-        data = data.to(rank)
-        target_reuse_dis = target_reuse_dis.to(rank)
+        data = data.cuda()
+        target_reuse_dis = target_reuse_dis.cuda()
         optimizer.zero_grad()
 
         output = model(data)
@@ -29,9 +29,9 @@ def train(args, model, rank, train_loader, loss_func, optimizer, epoch):
         loss.backward()
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0, norm_type=2)
-    
+
         optimizer.step()
-        if rank == 0:
+        if True:
             if batch_idx % args.log_interval == 0:
                 print(
                     "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Error rate: {:.6f}".format(
@@ -68,8 +68,7 @@ def test(model, rank, test_loader):
     print("Test set: LLC Error-rate: {:.4f}".format(error_rate))
 
 
-def main(rank, world_size):
-    setup(rank, world_size)
+def main():
     # Training settings
     parser = argparse.ArgumentParser(description="PyTorch MNIST Example")
     parser.add_argument(
@@ -110,23 +109,17 @@ def main(rank, world_size):
     )
     train_loader = torch.utils.data.DataLoader(train_heatmap_dataset, **train_kwargs)
 
-    model = ReuseDisPredictor().float().to(rank)
-    ddp_model = DDP(model, device_ids=[rank])
-    optimizer = optim.SGD(ddp_model.parameters(), lr=args.lr)
+    model = ReuseDisPredictor().float().cuda()
+    optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
-    loss_func = nn.MSELoss().to(rank)
+    loss_func = nn.MSELoss().cuda()
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
-        train(args, ddp_model, rank, train_loader, loss_func, optimizer, epoch)
-        if rank == 0:
-            torch.save(ddp_model.state_dict(), './ckpt/predictor_epoch_{}.pth'.format(epoch))
+        train(args, model, train_loader, loss_func, optimizer, epoch)
+        torch.save(model.state_dict(), './ckpt/predictor_epoch_{}.pth'.format(epoch))
         scheduler.step()
-    cleanup()
 
 if __name__ == "__main__":
-    n_gpus = torch.cuda.device_count()
-    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    world_size = n_gpus
-    run_demo(main, world_size)
+    main()
 

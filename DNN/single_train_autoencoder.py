@@ -11,15 +11,15 @@ from autoencoder import AutoEncoder
 from dist_util import setup, cleanup, run_demo
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-def train(encoder_decoder, predictor, rank, train_loader, optimizer, epoch, loss_func):
+def train(encoder_decoder, predictor, train_loader, optimizer, epoch, loss_func):
     encoder_decoder.train()
     predictor.eval()
     cnt = 0
     for batch_idx, sample_batched in enumerate(train_loader):
         data = sample_batched["heatmap"]
         target_reuse_dis = sample_batched["reuse_dis"]
-        real_heatmap = data.to(rank)
-        target_reuse_dis = target_reuse_dis.to(rank)
+        real_heatmap = data.cuda()
+        target_reuse_dis = target_reuse_dis.cuda()
         optimizer.zero_grad()
         predictor.zero_grad()
 
@@ -39,7 +39,7 @@ def train(encoder_decoder, predictor, rank, train_loader, optimizer, epoch, loss
 
         optimizer.step()
 
-        if rank == 0:
+        if True:
             if batch_idx % 10 == 0:
                 with torch.no_grad():
                     predict_real_reuse_dis = predictor(real_heatmap)
@@ -56,8 +56,7 @@ def train(encoder_decoder, predictor, rank, train_loader, optimizer, epoch, loss
                 )
 
 
-def main(rank, world_size):
-    setup(rank, world_size)
+def main():
     torch.manual_seed(42)
 
     train_kwargs = {"batch_size": 64}
@@ -66,28 +65,23 @@ def main(rank, world_size):
     train_kwargs.update(cuda_kwargs)
 
     train_heatmap_dataset = HeatmapDataset(
-        reuse_dis_file="../train_data/label.log",
-        heatmap_dir="../train_data/npy_heatmap",
+        reuse_dis_file="../../train_data/label.log",
+        heatmap_dir="../../train_data/npy_heatmap",
         transform=transforms.Compose([ToTensor()]),
     )
     train_loader = torch.utils.data.DataLoader(train_heatmap_dataset, **train_kwargs)
 
-    encoder_decoder = AutoEncoder(n_channels=1).to(rank).float()
-    ddp_encoder_decoder = DDP(encoder_decoder, device_ids=[rank])
-    reuse_dis_predictor = ReuseDisPredictor().to(rank).float()
-    ddp_reuse_dis_predictor = DDP(reuse_dis_predictor, device_ids=[rank])
-    ddp_reuse_dis_predictor.load_state_dict(torch.load('./ckpt/predictor_epoch_9.pth'))
+    encoder_decoder = AutoEncoder(n_channels=1).cuda().float()
+    reuse_dis_predictor = ReuseDisPredictor().cuda().float()
+    reuse_dis_predictor.load_state_dict(torch.load('./ckpt/predictor_epoch_14.pth'),strict=False)
 
-    loss_func = torch.nn.MSELoss().to(rank)
-    optimizer = torch.optim.Adam(ddp_encoder_decoder.parameters(), lr=1,
-                             weight_decay=1e-5)
-
+    loss_func = torch.nn.MSELoss().cuda()
+    optimizer = torch.optim.SGD(encoder_decoder.parameters(), lr=0.01)
+    scheduler = StepLR(optimizer, step_size=1, gamma=0.7)
     for epoch in range(1, 11):
-        train(ddp_encoder_decoder, ddp_reuse_dis_predictor, rank, train_loader, optimizer, epoch, loss_func)
-    cleanup()
+        train(encoder_decoder, reuse_dis_predictor, train_loader, optimizer, epoch, loss_func)
+        torch.save(encoder_decoder.state_dict(), './ckpt/AE_epoch_{}.pth'.format(epoch))
+        scheduler.step()
 
 if __name__ == "__main__":
-    n_gpus = torch.cuda.device_count()
-    assert n_gpus >= 2, f"Requires at least 2 GPUs to run, but got {n_gpus}"
-    world_size = n_gpus
-    run_demo(main, world_size)
+    main()

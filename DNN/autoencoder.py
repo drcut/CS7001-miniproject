@@ -60,14 +60,18 @@ class AutoEncoder(nn.Module):
 
         self.inc = DoubleConv(n_channels, 16)
         self.down1 = Down(16, 16)
+        self.down2 = Down(16, 16)
 
         self.up1 = Up(16, 16, bilinear)
+        self.up2 = Up(16, 16, bilinear)
         self.outc = nn.Conv2d(16, n_channels, kernel_size=1)
 
     def forward(self, x):
         x = self.inc(x)
         x = self.down1(x)
+        x = self.down2(x)
         x = self.up1(x)
+        x = self.up2(x)
         x = self.outc(x)
         logits = F.relu(x)
         return logits
