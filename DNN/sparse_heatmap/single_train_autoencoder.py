@@ -27,16 +27,20 @@ def train(encoder_decoder, train_loader, optimizer, epoch, loss_func):
         addr_list = addr_list.view(-1)
         # (N, C, H, W)->(N*C*W,H)
         tmp = proxy_heatmap.permute(0,1,3,2).reshape(-1,height)
-        output = F.log_softmax(tmp, dim=1)
+        output = F.softmax(tmp, dim=1)
         loss = loss_func(output, addr_list)
         loss.backward()
         
         torch.nn.utils.clip_grad_norm_(encoder_decoder.decoder.parameters(), max_norm=2.0, norm_type=2)
 
+        # for param in encoder_decoder.decoder.parameters():
+        #     if param.requires_grad:
+        #         print(param.data)
+        #         print(param.grad)
         optimizer.step()
 
         if True:
-            if batch_idx % 20 == 0:
+            if batch_idx % 10 == 0:
                 batch_size = len(data)
                 pred = output.argmax(dim=1, keepdim=True)
                 correct = pred.eq(addr_list.view_as(pred)).sum().item()/pred.shape[0]
@@ -55,7 +59,7 @@ def train(encoder_decoder, train_loader, optimizer, epoch, loss_func):
 def main():
     torch.manual_seed(42)
 
-    train_kwargs = {"batch_size": 8}
+    train_kwargs = {"batch_size": 16}
 
     cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
     train_kwargs.update(cuda_kwargs)
@@ -70,13 +74,14 @@ def main():
     encoder_decoder = AutoEncoder().float().cuda()
     encoder_decoder.encoder.load_state_dict(torch.load('./ckpt/predictor_epoch_14.pth'),strict=False)
 
-    loss_func = torch.nn.NLLLoss().cuda()
-    optimizer = torch.optim.SGD(encoder_decoder.decoder.parameters(), lr=0.1)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.7)
+    loss_func = torch.nn.CrossEntropyLoss().cuda()
+    optimizer = torch.optim.Adam(encoder_decoder.decoder.parameters(), lr=0.01)
+    # optimizer = torch.optim.SGD(encoder_decoder.decoder.parameters(), lr=0.01)
+    # scheduler = StepLR(optimizer, step_size=1, gamma=0.7)
     for epoch in range(1, 11):
         train(encoder_decoder, train_loader, optimizer, epoch, loss_func)
-        torch.save(encoder_decoder.state_dict(), './ckpt/AE_epoch_{}.pth'.format(epoch))
-        scheduler.step()
+        # torch.save(encoder_decoder.state_dict(), './ckpt/AE_epoch_{}.pth'.format(epoch))
+        # scheduler.step()
 
 if __name__ == "__main__":
     main()

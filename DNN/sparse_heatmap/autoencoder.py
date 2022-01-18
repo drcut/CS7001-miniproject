@@ -41,19 +41,18 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
-        self.net = spconv.SparseSequential(
-            spconv.SparseInverseConv2d(64, 64, 2, indice_key="subm5"),
+        self.net = nn.Sequential(
+            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.BatchNorm1d(64),
-            spconv.SparseInverseConv2d(64, 64, 2, indice_key="subm4"),
-            nn.BatchNorm1d(64),
-            spconv.SparseInverseConv2d(64, 64, 2, indice_key="subm3"),
-            nn.BatchNorm1d(64),
-            spconv.SparseInverseConv2d(64, 64, 2, indice_key="subm2"),
-            nn.BatchNorm1d(64),
-            spconv.SparseInverseConv2d(64, 64, 2, indice_key="subm1"),
-            nn.BatchNorm1d(64),
-            spconv.SparseInverseConv2d(64, 1, 2, indice_key="subm0"),
+            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True),
+            nn.Conv2d(32, 8, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True),
+            nn.Conv2d(8, 1, kernel_size=3, padding=1, bias=False),
+            nn.ReLU(),
         )
 
     def forward(self, x):
@@ -72,13 +71,12 @@ class AutoEncoder(nn.Module):
         # x: must be NHWC tensor
         x_sp = spconv.SparseConvTensor.from_dense(x.reshape(-1, height, width, 1))
         x_sp = self.encoder(x_sp)
-        return x_sp
-
-    def decode(self, x_sp):
-        x_sp = self.decoder(x_sp)
         x = self.to_dense(x_sp)
-        # output = F.softmax(x, dim=2)
         return x
+
+    def decode(self, x):
+        # x: [8, 64, 16, 64]
+        return self.decoder(x)
 
     def forward(self, x):
         raise NotImplementEderror
